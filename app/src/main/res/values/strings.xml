@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ShortsGuard</string>
+    <string name="service_description">Detects when the Instagram Reels or YouTube Shorts screen is open so ShortsGuard can enforce your daily limit. It only looks at screen structure in those two apps and does not read, store or send any content.</string>
+</resources>
