@@ -1,6 +1,7 @@
 package com.example.shortsguard
 
 import android.content.Context
+import android.content.SharedPreferences
 import java.time.LocalDate
 import java.time.LocalDateTime
 
@@ -15,6 +16,10 @@ data class Snapshot(
     val sleepEnd: Int,
     val strict: Boolean,
     val debug: Boolean,
+    val liveNotification: Boolean,
+    val alertWhenOff: Boolean,
+    val remoteFetchedAt: Long,
+    val lastDump: String,
     val usedSeconds: Int,
     val blockedToday: Int,
     val week: List<Pair<LocalDate, Int>>,
@@ -68,10 +73,66 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("strict", false)
         set(v) = sp.edit().putBoolean("strict", v).apply()
 
-    /** Logs view IDs of the foreground Instagram/YouTube screen to Logcat. */
+    /** Logs view IDs of the foreground Instagram/YouTube screen to Logcat and stores them for the app to show. */
     var debug: Boolean
         get() = sp.getBoolean("debug", false)
         set(v) = sp.edit().putBoolean("debug", v).apply()
+
+    // ---- setup, notifications, alerts -----------------------------------------
+
+    var onboarded: Boolean
+        get() = sp.getBoolean("onboarded", false)
+        set(v) = sp.edit().putBoolean("onboarded", v).apply()
+
+    /** Ongoing "N min left today" notification. */
+    var liveNotification: Boolean
+        get() = sp.getBoolean("live_notif", true)
+        set(v) = sp.edit().putBoolean("live_notif", v).apply()
+
+    /** Notify when the accessibility service gets switched off. */
+    var alertWhenOff: Boolean
+        get() = sp.getBoolean("alert_off", true)
+        set(v) = sp.edit().putBoolean("alert_off", v).apply()
+
+    /** True once the service has been enabled at least once, so we only alert about a service that was on. */
+    var serviceWasOn: Boolean
+        get() = sp.getBoolean("service_was_on", false)
+        set(v) = sp.edit().putBoolean("service_was_on", v).apply()
+
+    // ---- detection rules ------------------------------------------------------
+
+    var remoteUrl: String
+        get() = sp.getString("remote_url", "") ?: ""
+        set(v) = sp.edit().putString("remote_url", v).apply()
+
+    var remoteJson: String
+        get() = sp.getString("remote_json", "") ?: ""
+        set(v) = sp.edit().putString("remote_json", v).apply()
+
+    var remoteFetchedAt: Long
+        get() = sp.getLong("remote_fetched_at", 0L)
+        set(v) = sp.edit().putLong("remote_fetched_at", v).apply()
+
+    /** Extra Instagram view IDs added by hand, comma separated. */
+    var extraInstagramIds: String
+        get() = sp.getString("extra_ig", "") ?: ""
+        set(v) = sp.edit().putString("extra_ig", v).apply()
+
+    /** Extra YouTube view IDs added by hand, comma separated. */
+    var extraYoutubeIds: String
+        get() = sp.getString("extra_yt", "") ?: ""
+        set(v) = sp.edit().putString("extra_yt", v).apply()
+
+    /** Last capture of on-screen view IDs (only written while debug logging is on). */
+    var lastDump: String
+        get() = sp.getString("last_dump", "") ?: ""
+        set(v) = sp.edit().putString("last_dump", v).apply()
+
+    fun registerListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) =
+        sp.registerOnSharedPreferenceChangeListener(listener)
+
+    fun unregisterListener(listener: SharedPreferences.OnSharedPreferenceChangeListener) =
+        sp.unregisterOnSharedPreferenceChangeListener(listener)
 
     // ---- usage --------------------------------------------------------------
 
@@ -133,6 +194,10 @@ class Prefs(context: Context) {
             sleepEnd = sleepEnd,
             strict = strict,
             debug = debug,
+            liveNotification = liveNotification,
+            alertWhenOff = alertWhenOff,
+            remoteFetchedAt = remoteFetchedAt,
+            lastDump = lastDump,
             usedSeconds = usedSeconds(),
             blockedToday = blockedToday(),
             week = (6 downTo 0).map { back ->

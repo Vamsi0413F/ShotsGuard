@@ -1,0 +1,10 @@
+{
+  "instagram": {
+    "ids": ["clips_viewer_view_pager", "clips_viewer_video_layout"],
+    "tab": "Reels"
+  },
+  "youtube": {
+    "ids": ["reel_recycler", "reel_player_page_container"],
+    "tab": "Shorts"
+  }
+}

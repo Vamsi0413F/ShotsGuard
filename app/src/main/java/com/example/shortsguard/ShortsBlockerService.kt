@@ -1,6 +1,8 @@
 package com.example.shortsguard
 
 import android.accessibilityservice.AccessibilityService
+import android.content.Intent
+import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
@@ -11,6 +13,9 @@ import android.widget.Toast
 
 class ShortsBlockerService : AccessibilityService() {
 
+    /** One on-screen window of the Instagram/YouTube app. */
+    private class Win(val root: AccessibilityNodeInfo, val active: Boolean)
+
     private lateinit var prefs: Prefs
     private val handler = Handler(Looper.getMainLooper())
 
@@ -19,10 +24,33 @@ class ShortsBlockerService : AccessibilityService() {
     private var lastBack = 0L
     private var backAttempts = 0
     private var lastDump = 0L
+    private var lastHint = 0L
+
+    private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+        if (key == "remote_json" || key == "extra_ig" || key == "extra_yt") Rules.reload(prefs)
+    }
 
     override fun onServiceConnected() {
         prefs = Prefs(this)
         prefs.pruneOld()
+        Rules.reload(prefs)
+        prefs.registerListener(prefListener)
+        prefs.serviceWasOn = true
+
+        Status.createChannels(this)
+        Status.clearServiceOff(this)
+        handler.removeCallbacks(statusLoop)
+        handler.post(statusLoop)
+    }
+
+    override fun onUnbind(intent: Intent?): Boolean {
+        stopTicker()
+        handler.removeCallbacks(statusLoop)
+        if (::prefs.isInitialized) {
+            prefs.unregisterListener(prefListener)
+            Status.showServiceOff(this)
+        }
+        return super.onUnbind(intent)
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -34,21 +62,22 @@ class ShortsBlockerService : AccessibilityService() {
         if (now - lastCheck < 250) return
         lastCheck = now
 
-        val root = rootInActiveWindow ?: return
-        if (root.packageName?.toString() != pkg) return
-        if (prefs.debug) dumpIds(root)
+        if (prefs.debug) dump(pkg)
 
-        if (!isEnabledFor(pkg) || !Detector.isShortForm(pkg, root)) {
+        // Look at every window of the app, not only the focused one: a minimised, floating or
+        // split-screen Shorts player is a separate window and is not the "active" window.
+        val shortWin = rootsFor(pkg).firstOrNull { Detector.isShortForm(pkg, it.root) }
+        if (shortWin == null || !isEnabledFor(pkg)) {
             stopTicker()
             return
         }
 
         val reason = blockReason()
-        if (reason != null) {
-            stopTicker()
-            block(reason)
-        } else {
+        if (reason == null) {
             startTicker(pkg)
+        } else {
+            stopTicker()
+            block(reason, shortWin.active)
         }
     }
 
@@ -56,7 +85,25 @@ class ShortsBlockerService : AccessibilityService() {
 
     override fun onDestroy() {
         stopTicker()
+        handler.removeCallbacks(statusLoop)
         super.onDestroy()
+    }
+
+    // ---- windows ------------------------------------------------------------
+
+    /** Every window belonging to [pkg], marking which one has focus. */
+    private fun rootsFor(pkg: String): List<Win> {
+        val result = mutableListOf<Win>()
+        for (window in windows) {
+            val root = window.root ?: continue
+            if (root.packageName?.toString() == pkg) result += Win(root, window.isActive)
+        }
+        if (result.isEmpty()) {
+            rootInActiveWindow
+                ?.takeIf { it.packageName?.toString() == pkg }
+                ?.let { result += Win(it, true) }
+        }
+        return result
     }
 
     private fun isEnabledFor(pkg: String) = when (pkg) {
@@ -75,14 +122,11 @@ class ShortsBlockerService : AccessibilityService() {
 
     // ---- watch-time counting -----------------------------------------------
 
-    /** While Reels/Shorts is on screen, add one second to today's total every second. */
+    /** While Reels/Shorts is on screen (in any window), add one second to today's total every second. */
     private val ticker = object : Runnable {
         override fun run() {
             val pkg = watchingPkg ?: return
-            val root = rootInActiveWindow
-            val stillWatching = root != null &&
-                root.packageName?.toString() == pkg &&
-                Detector.isShortForm(pkg, root)
+            val stillWatching = rootsFor(pkg).any { Detector.isShortForm(pkg, it.root) }
             if (!stillWatching) {
                 stopTicker()
                 return
@@ -92,11 +136,14 @@ class ShortsBlockerService : AccessibilityService() {
 
             val reason = blockReason()
             if (reason != null) {
+                val active = rootsFor(pkg).any { it.active && Detector.isShortForm(pkg, it.root) }
                 stopTicker()
-                block(reason)
+                block(reason, active)
                 return
             }
-            if (prefs.secondsLeft() == 60) toast("1 minute of Reels/Shorts left today")
+            val left = prefs.secondsLeft()
+            if (left == 60) toast("1 minute of Reels/Shorts left today")
+            if (left % 10 == 0) Status.refresh(this@ShortsBlockerService, prefs)
             handler.postDelayed(this, 1000)
         }
     }
@@ -113,12 +160,32 @@ class ShortsBlockerService : AccessibilityService() {
         handler.removeCallbacks(ticker)
     }
 
+    /** Keeps the notification and widget fresh, and re-downloads the hosted rules once a day. */
+    private val statusLoop = object : Runnable {
+        override fun run() {
+            Status.refresh(this@ShortsBlockerService, prefs)
+            val stale = System.currentTimeMillis() - prefs.remoteFetchedAt > 24 * 60 * 60 * 1000L
+            if (prefs.remoteUrl.isNotBlank() && stale) RemoteRules.fetch(prefs)
+            handler.postDelayed(this, 30_000)
+        }
+    }
+
     // ---- blocking -----------------------------------------------------------
 
-    private fun block(reason: String) {
+    private fun block(reason: String, canPressBack: Boolean) {
         val now = SystemClock.uptimeMillis()
-        if (now - lastBack < 700) return
 
+        if (!canPressBack) {
+            // The Shorts are in a small or background window. Back would act on whichever app has
+            // focus, so don't press it. Just tell the user.
+            if (now - lastHint > 10_000) {
+                lastHint = now
+                toast("$reason Close the small Shorts window.")
+            }
+            return
+        }
+
+        if (now - lastBack < 700) return
         backAttempts = if (now - lastBack > 4000) 1 else backAttempts + 1
         lastBack = now
 
@@ -139,21 +206,35 @@ class ShortsBlockerService : AccessibilityService() {
 
     // ---- debugging ----------------------------------------------------------
 
-    private fun dumpIds(root: AccessibilityNodeInfo) {
+    /** Writes the windows and view IDs currently on screen to Logcat and to Prefs.lastDump (shown in the app). */
+    private fun dump(pkg: String) {
         val now = SystemClock.uptimeMillis()
         if (now - lastDump < 3000) return
         lastDump = now
 
-        val ids = linkedSetOf<String>()
-        fun walk(node: AccessibilityNodeInfo?, depth: Int) {
-            if (node == null || depth > 25) return
-            node.viewIdResourceName?.let {
-                ids += it.substringAfter(":id/") + if (node.isSelected) "[selected]" else ""
-            }
-            for (i in 0 until node.childCount) walk(node.getChild(i), depth + 1)
+        val text = StringBuilder()
+        text.append("Windows: ").append(
+            windows.joinToString { w ->
+                "${w.root?.packageName}(active=${w.isActive}, pip=${w.isInPictureInPictureMode})"
+            },
+        ).append('\n')
+        for (win in rootsFor(pkg)) {
+            val ids = linkedSetOf<String>()
+            collectIds(win.root, 0, ids)
+            text.append(if (win.active) "[focused window] " else "[other window] ")
+                .append(ids.joinToString()).append('\n')
         }
-        walk(root, 0)
-        Log.d("ShortsGuard", "${root.packageName}: ${ids.joinToString()}")
+        val out = text.toString().take(3000)
+        Log.d("ShortsGuard", out)
+        prefs.lastDump = out
+    }
+
+    private fun collectIds(node: AccessibilityNodeInfo?, depth: Int, out: MutableSet<String>) {
+        if (node == null || depth > 25) return
+        node.viewIdResourceName?.let {
+            out += it.substringAfter(":id/") + if (node.isSelected) "[selected]" else ""
+        }
+        for (i in 0 until node.childCount) collectIds(node.getChild(i), depth + 1, out)
     }
 }
 
