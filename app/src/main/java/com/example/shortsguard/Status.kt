@@ -28,6 +28,13 @@ object Status {
         else -> "${(prefs.secondsLeft() + 59) / 60} min left today"
     }
 
+    /** "12 watched today" when combined, "8 Reels, 4 Shorts today" when separate. */
+    fun countText(prefs: Prefs): String {
+        val reels = prefs.countToday(Detector.INSTAGRAM)
+        val shorts = prefs.countToday(Detector.YOUTUBE)
+        return if (prefs.combinedCount) "${reels + shorts} watched today" else "$reels Reels, $shorts Shorts today"
+    }
+
     fun createChannels(context: Context) {
         val nm = context.getSystemService(NotificationManager::class.java)
         nm.createNotificationChannel(
@@ -60,6 +67,7 @@ object Status {
             .setSmallIcon(R.drawable.ic_stat)
             .setContentTitle("ShortsGuard")
             .setContentText(headline(prefs))
+            .setSubText(countText(prefs))
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setShowWhen(false)
@@ -85,12 +93,12 @@ object Status {
             val max = prefs.limitMinutes * 60
             views.setTextViewText(
                 R.id.widget_sub,
-                "Used ${prefs.usedSeconds() / 60} of ${prefs.limitMinutes} min",
+                "Used ${prefs.usedSeconds() / 60} of ${prefs.limitMinutes} min. ${countText(prefs)}",
             )
             views.setProgressBar(R.id.widget_progress, max, prefs.usedSeconds().coerceAtMost(max), false)
             views.setViewVisibility(R.id.widget_progress, View.VISIBLE)
         } else {
-            views.setTextViewText(R.id.widget_sub, "")
+            views.setTextViewText(R.id.widget_sub, countText(prefs))
             views.setViewVisibility(R.id.widget_progress, View.GONE)
         }
 

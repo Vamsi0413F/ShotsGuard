@@ -22,6 +22,9 @@ data class Snapshot(
     val lastDump: String,
     val usedSeconds: Int,
     val blockedToday: Int,
+    val igToday: Int,
+    val ytToday: Int,
+    val combinedCount: Boolean,
     val week: List<Pair<LocalDate, Int>>,
     val sleepActive: Boolean,
     val locked: Boolean,
@@ -94,6 +97,11 @@ class Prefs(context: Context) {
         get() = sp.getBoolean("alert_off", true)
         set(v) = sp.edit().putBoolean("alert_off", v).apply()
 
+    /** Show one combined "watched" count instead of separate Reels and Shorts counts. */
+    var combinedCount: Boolean
+        get() = sp.getBoolean("count_combined", false)
+        set(v) = sp.edit().putBoolean("count_combined", v).apply()
+
     /** True once the service has been enabled at least once, so we only alert about a service that was on. */
     var serviceWasOn: Boolean
         get() = sp.getBoolean("service_was_on", false)
@@ -153,6 +161,17 @@ class Prefs(context: Context) {
         sp.edit().putInt(key, sp.getInt(key, 0) + 1).apply()
     }
 
+    private fun countKey(pkg: String) =
+        if (pkg == Detector.INSTAGRAM) "count_ig_${today()}" else "count_yt_${today()}"
+
+    /** How many Reels (Instagram) or Shorts (YouTube) were watched today. */
+    fun countToday(pkg: String): Int = sp.getInt(countKey(pkg), 0)
+
+    fun addCount(pkg: String) {
+        val key = countKey(pkg)
+        sp.edit().putInt(key, sp.getInt(key, 0) + 1).apply()
+    }
+
     fun secondsLeft(): Int = limitMinutes * 60 - usedSeconds()
 
     fun sleepActive(): Boolean {
@@ -174,6 +193,8 @@ class Prefs(context: Context) {
             val date = when {
                 key.startsWith("used_") -> key.removePrefix("used_")
                 key.startsWith("blocked_") -> key.removePrefix("blocked_")
+                key.startsWith("count_ig_") -> key.removePrefix("count_ig_")
+                key.startsWith("count_yt_") -> key.removePrefix("count_yt_")
                 else -> continue
             }
             val parsed = runCatching { LocalDate.parse(date) }.getOrNull() ?: continue
@@ -200,6 +221,9 @@ class Prefs(context: Context) {
             lastDump = lastDump,
             usedSeconds = usedSeconds(),
             blockedToday = blockedToday(),
+            igToday = countToday(Detector.INSTAGRAM),
+            ytToday = countToday(Detector.YOUTUBE),
+            combinedCount = combinedCount,
             week = (6 downTo 0).map { back ->
                 val d = t.minusDays(back.toLong())
                 d to sp.getInt("used_$d", 0)

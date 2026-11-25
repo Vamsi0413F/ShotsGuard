@@ -336,6 +336,7 @@ fun Screen(prefs: Prefs, onReplaySetup: () -> Unit) {
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
+            Text(countLine(s), style = MaterialTheme.typography.titleSmall)
             Text(
                 "Blocked ${s.blockedToday} time${if (s.blockedToday == 1) "" else "s"} today. " +
                     "Allowance resets at ${formatHour(s.resetHour)}.",
@@ -381,6 +382,21 @@ fun Screen(prefs: Prefs, onReplaySetup: () -> Unit) {
         Section("Apps") {
             SwitchRow("Instagram Reels", null, s.blockInstagram, canEdit) { prefs.blockInstagram = it; refresh() }
             SwitchRow("YouTube Shorts", null, s.blockYoutube, canEdit) { prefs.blockYoutube = it; refresh() }
+        }
+
+        // ---- counting ----
+        Section("Counting") {
+            SwitchRow(
+                "Combine Reels and Shorts into one count",
+                "Off shows Reels and Shorts separately.",
+                s.combinedCount,
+                true,
+            ) { prefs.combinedCount = it; refresh() }
+            Text(
+                "The count goes up by one for each Reel or Short you swipe to while watching is allowed. " +
+                    "It is based on swipes, so it can be off by a few. Blocked attempts are not counted.",
+                style = MaterialTheme.typography.bodySmall,
+            )
         }
 
         // ---- sleep mode ----
@@ -521,6 +537,10 @@ fun Screen(prefs: Prefs, onReplaySetup: () -> Unit) {
         Spacer(Modifier.height(24.dp))
     }
 }
+
+private fun countLine(s: Snapshot): String =
+    if (s.combinedCount) "${s.igToday + s.ytToday} Reels/Shorts watched today"
+    else "Reels watched: ${s.igToday}   Shorts watched: ${s.ytToday}"
 
 @Composable
 private fun Section(title: String, content: @Composable () -> Unit) {

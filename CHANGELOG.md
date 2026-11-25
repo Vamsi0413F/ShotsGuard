@@ -2,6 +2,11 @@
 
 All notable changes to ShortsGuard are listed here, newest first.
 
+## [1.2] - 2026-11-24
+
+### Added
+- Watched counter: how many Reels and Shorts you swiped through today, with a setting to show them separately or combined. Also shown in the notification and widget. It counts swipes, so it can be off by a few.
+
 ## [1.1] - 2026-11-24
 
 ### Added

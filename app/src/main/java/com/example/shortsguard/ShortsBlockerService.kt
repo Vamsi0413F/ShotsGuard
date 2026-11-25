@@ -25,6 +25,8 @@ class ShortsBlockerService : AccessibilityService() {
     private var backAttempts = 0
     private var lastDump = 0L
     private var lastHint = 0L
+    private var lastCountAt = 0L
+    private var lastShortSeen = 0L
 
     private val prefListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         if (key == "remote_json" || key == "extra_ig" || key == "extra_yt") Rules.reload(prefs)
@@ -57,6 +59,17 @@ class ShortsBlockerService : AccessibilityService() {
         val pkg = event?.packageName?.toString() ?: return
         if (pkg != Detector.INSTAGRAM && pkg != Detector.YOUTUBE) return
 
+        // Swiping to the next Reel/Short fires scroll events. While one is being watched (allowed),
+        // count one per swipe. Several events per swipe are merged by the 900 ms gap.
+        if (event?.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED) {
+            val t = SystemClock.uptimeMillis()
+            if (watchingPkg == pkg && t - lastCountAt > 900) {
+                lastCountAt = t
+                prefs.addCount(pkg)
+            }
+            return
+        }
+
         // Instagram and YouTube fire many events per second; checking more often than this is wasted work.
         val now = SystemClock.uptimeMillis()
         if (now - lastCheck < 250) return
@@ -74,6 +87,13 @@ class ShortsBlockerService : AccessibilityService() {
 
         val reason = blockReason()
         if (reason == null) {
+            val t = SystemClock.uptimeMillis()
+            // First Reel/Short of this visit (a gap of 3 s without one means a new visit).
+            if (watchingPkg != pkg && t - lastShortSeen > 3000) {
+                lastCountAt = t
+                prefs.addCount(pkg)
+            }
+            lastShortSeen = t
             startTicker(pkg)
         } else {
             stopTicker()
@@ -133,6 +153,7 @@ class ShortsBlockerService : AccessibilityService() {
             }
 
             prefs.addSeconds(1)
+            lastShortSeen = SystemClock.uptimeMillis()
 
             val reason = blockReason()
             if (reason != null) {
